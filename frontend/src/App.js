@@ -2,12 +2,12 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import './App.css';
 
-// Pages
 import Home from './pages/Home';
 import ScanResult from './pages/ScanResult';
 import Complaint from './pages/Complaint';
 import Login from './pages/Login';
 import AdminDashboard from './pages/AdminDashboard';
+import Rating from './pages/Rating';
 
 function App() {
   return (
@@ -16,6 +16,7 @@ function App() {
         <Route path="/" element={<Home />} />
         <Route path="/scan/:qrCode" element={<ScanResult />} />
         <Route path="/complaint/:qrCode" element={<Complaint />} />
+        <Route path="/rate/:qrCode/:tripId" element={<Rating />} />
         <Route path="/login" element={<Login />} />
         <Route path="/admin" element={<AdminDashboard />} />
       </Routes>
