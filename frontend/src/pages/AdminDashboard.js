@@ -1,373 +1,482 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 
-const API = 'https://efas-system.onrender.com';
+const API = "https://efas-system.onrender.com";
 
-function AdminDashboard() {
+const NAV_SUPERADMIN = [
+  { key: "overview",   label: "Overview",       icon: "📊" },
+  { key: "drivers",    label: "Manage Drivers", icon: "🚗" },
+  { key: "complaints", label: "Complaints",     icon: "📋" },
+  { key: "concerns",   label: "Concerns",       icon: "💬" },
+];
+
+const NAV_ADMIN = [
+  { key: "overview",   label: "Overview",       icon: "📊" },
+  { key: "drivers",    label: "Manage Drivers", icon: "🚗" },
+  { key: "complaints", label: "Complaints",     icon: "📋" },
+  { key: "concerns",   label: "Concerns",       icon: "💬" },
+];
+
+// ── Stat Card ────────────────────────────────────────────────────────────────
+function StatCard({ label, value, color }) {
+  return (
+    <div style={{
+      background: "#fff", borderRadius: 12, padding: "24px 28px",
+      boxShadow: "0 2px 8px rgba(0,0,0,.07)", borderLeft: `5px solid ${color}`,
+      minWidth: 160, flex: 1,
+    }}>
+      <div style={{ fontSize: 28, fontWeight: 700, color }}>{value ?? "—"}</div>
+      <div style={{ fontSize: 13, color: "#666", marginTop: 4 }}>{label}</div>
+    </div>
+  );
+}
+
+// ── Table ────────────────────────────────────────────────────────────────────
+function DataTable({ columns, rows, emptyText = "Walang records." }) {
+  if (!rows || rows.length === 0)
+    return <p style={{ color: "#888", padding: 16 }}>{emptyText}</p>;
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+        <thead>
+          <tr style={{ background: "#f0f4ff" }}>
+            {columns.map(c => (
+              <th key={c.key} style={{ padding: "10px 14px", textAlign: "left", fontWeight: 600, color: "#334" }}>
+                {c.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={i} style={{ borderBottom: "1px solid #eee" }}>
+              {columns.map(c => (
+                <td key={c.key} style={{ padding: "10px 14px", color: "#333" }}>
+                  {c.render ? c.render(row) : row[c.key] ?? "—"}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Badge ────────────────────────────────────────────────────────────────────
+function Badge({ status }) {
+  const map = {
+    new:        { bg: "#dbeafe", color: "#1e40af" },
+    pending:    { bg: "#fff3cd", color: "#856404" },
+    resolved:   { bg: "#d1e7dd", color: "#0a5c36" },
+    rejected:   { bg: "#f8d7da", color: "#842029" },
+    active:     { bg: "#d1e7dd", color: "#0a5c36" },
+    inactive:   { bg: "#e2e3e5", color: "#41464b" },
+  };
+  const s = map[status?.toLowerCase()] || { bg: "#e9ecef", color: "#495057" };
+  return (
+    <span style={{
+      background: s.bg, color: s.color,
+      borderRadius: 20, padding: "2px 10px", fontSize: 12, fontWeight: 600,
+    }}>
+      {status ?? "—"}
+    </span>
+  );
+}
+
+// ── Confirm Modal ────────────────────────────────────────────────────────────
+function ConfirmModal({ message, onConfirm, onCancel }) {
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,.4)",
+      display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999,
+    }}>
+      <div style={{ background: "#fff", borderRadius: 12, padding: 32, maxWidth: 360, width: "90%" }}>
+        <p style={{ marginBottom: 24, color: "#333" }}>{message}</p>
+        <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
+          <button onClick={onCancel}  style={btn("#e9ecef","#333")}>Kanselahin</button>
+          <button onClick={onConfirm} style={btn("#dc3545","#fff")}>Kumpirmahin</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Respond Modal (para sa Concerns) ─────────────────────────────────────────
+function RespondModal({ concern, onClose, onSave }) {
+  const [response, setResponse] = useState(concern.admin_response || "");
+  const [status,   setStatus]   = useState(concern.status || "new");
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,.4)",
+      display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999,
+    }}>
+      <div style={{ background: "#fff", borderRadius: 12, padding: 32, maxWidth: 440, width: "90%" }}>
+        <h3 style={{ margin: "0 0 8px", color: "#1a2a4a" }}>Sagutin ang Concern</h3>
+        <p style={{ fontSize: 13, color: "#666", marginBottom: 16 }}>
+          <strong>{concern.driver_name}</strong> — {concern.concern_type}
+        </p>
+        <p style={{ fontSize: 14, color: "#333", background: "#f8fafc", padding: 12, borderRadius: 8, marginBottom: 16 }}>
+          {concern.description}
+        </p>
+        <label style={{ fontSize: 13, fontWeight: 600, color: "#334", display: "block", marginBottom: 6 }}>Status</label>
+        <select value={status} onChange={e => setStatus(e.target.value)}
+          style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1.5px solid #d1d5db", marginBottom: 14, fontSize: 14 }}>
+          <option value="new">New</option>
+          <option value="in_progress">In Progress</option>
+          <option value="resolved">Resolved</option>
+        </select>
+        <label style={{ fontSize: 13, fontWeight: 600, color: "#334", display: "block", marginBottom: 6 }}>Sagot</label>
+        <textarea value={response} onChange={e => setResponse(e.target.value)} rows={4}
+          placeholder="Isulat ang iyong sagot sa driver..."
+          style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1.5px solid #d1d5db",
+            fontSize: 14, boxSizing: "border-box", fontFamily: "inherit", resize: "vertical", marginBottom: 20 }} />
+        <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
+          <button onClick={onClose}                          style={btn("#e9ecef","#333")}>Kanselahin</button>
+          <button onClick={() => onSave(concern.id, status, response)} style={btn("#1a2a4a","#fff")}>I-save</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const btn = (bg, color) => ({
+  background: bg, color, border: "none", borderRadius: 8,
+  padding: "8px 20px", cursor: "pointer", fontWeight: 600, fontSize: 14,
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Main Component
+// ════════════════════════════════════════════════════════════════════════════
+export default function AdminDashboard() {
   const navigate = useNavigate();
-  const [user, setUser] = useState(null);
-  const [tab, setTab] = useState('overview');
-  const [stats, setStats] = useState({});
-  const [drivers, setDrivers] = useState([]);
-  const [complaints, setComplaints] = useState([]);
-  const [concerns, setConcerns] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [user,      setUser]      = useState(null);
+  const [activeTab, setActiveTab] = useState("overview");
+  const [stats,     setStats]     = useState({});
+  const [data,      setData]      = useState([]);
+  const [loading,   setLoading]   = useState(false);
+  const [confirm,   setConfirm]   = useState(null);
+  const [respond,   setRespond]   = useState(null); // concern being responded to
+  const [toast,     setToast]     = useState("");
 
-  const token = localStorage.getItem('efas_token');
+  // ── Auth ───────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const stored = localStorage.getItem("efas_user");
+    if (!stored) { navigate("/login"); return; }
+    const u = JSON.parse(stored);
+    if (u.role !== "superadmin" && u.role !== "admin") { navigate("/login"); return; }
+    setUser(u);
+  }, [navigate]);
+
+  const isSuperAdmin = user?.role === "superadmin";
+  const navItems     = isSuperAdmin ? NAV_SUPERADMIN : NAV_ADMIN;
+  const token        = localStorage.getItem("efas_token");
+  const authHeaders  = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+
+  // ── Fetch stats ────────────────────────────────────────────────────────
+  async function fetchStats() {
+    try {
+      const res = await fetch(`${API}/api/stats`, { headers: authHeaders });
+      const d   = await res.json();
+      // Backend returns { success, data: { total_drivers, active_drivers, ... } }
+      const s   = d.data || d;
+      setStats({
+        drivers:    s.total_drivers    ?? s.drivers    ?? "—",
+        complaints: s.total_complaints ?? s.complaints ?? "—",
+        concerns:   s.new_concerns     ?? s.concerns   ?? "—",
+        pending:    s.new_complaints   ?? s.pending    ?? "—",
+        scans:      s.scans_today      ?? "—",
+      });
+    } catch { /* silent */ }
+  }
+
+  // ── Fetch tab data ─────────────────────────────────────────────────────
+  async function fetchTab(tab) {
+    setLoading(true);
+    setData([]);
+    const eps = {
+      drivers:    "/api/drivers",
+      complaints: "/api/complaints",
+      concerns:   "/api/concerns",
+    };
+    const ep = eps[tab];
+    if (!ep) { setLoading(false); return; }
+    try {
+      const res = await fetch(`${API}${ep}`, { headers: authHeaders });
+      const d   = await res.json();
+      // Backend returns { success, data: [...] } OR plain array
+      setData(Array.isArray(d) ? d : (d.data ?? []));
+    } catch { setData([]); }
+    finally  { setLoading(false); }
+  }
 
   useEffect(() => {
-    const savedUser = localStorage.getItem('efas_user');
-    if (!token || !savedUser) { navigate('/login'); return; }
-    setUser(JSON.parse(savedUser));
-    loadData();
-  }, []);
+    if (!user) return;
+    fetchStats();
+    if (activeTab !== "overview") fetchTab(activeTab);
+  }, [activeTab, user]); // eslint-disable-line
 
-  const loadData = async () => {
+  // ── Helpers ────────────────────────────────────────────────────────────
+  function showToast(msg) { setToast(msg); setTimeout(() => setToast(""), 3000); }
+  function askConfirm(message, onConfirm) { setConfirm({ message, onConfirm }); }
+
+  // Update driver status — backend uses /api/drivers/:id/status
+  async function updateDriverStatus(id, status) {
     try {
-      const headers = { Authorization: `Bearer ${token}` };
-      const [statsRes, driversRes, complaintsRes, concernsRes] = await Promise.all([
-        axios.get(`${API}/api/stats`, { headers }),
-        axios.get(`${API}/api/drivers`, { headers }),
-        axios.get(`${API}/api/complaints`, { headers }),
-        axios.get(`${API}/api/concerns`, { headers }),
-      ]);
-      setStats(statsRes.data.data);
-      setDrivers(driversRes.data.data);
-      setComplaints(complaintsRes.data.data);
-      setConcerns(concernsRes.data.data);
-    } catch { navigate('/login'); }
-    setLoading(false);
+      const res = await fetch(`${API}/api/drivers/${id}/status`, {
+        method: "PATCH", headers: authHeaders,
+        body: JSON.stringify({ status }),
+      });
+      if (!res.ok) throw new Error();
+      showToast(`Driver ${status === "active" ? "na-activate" : "na-deactivate"}!`);
+      fetchTab("drivers");
+    } catch { showToast("Hindi na-update. Subukan ulit."); }
+  }
+
+  // Update complaint status — backend uses /api/complaints/:id with { status }
+  async function updateComplaintStatus(id, status) {
+    try {
+      const res = await fetch(`${API}/api/complaints/${id}`, {
+        method: "PATCH", headers: authHeaders,
+        body: JSON.stringify({ status }),
+      });
+      if (!res.ok) throw new Error();
+      showToast("Complaint na-update!");
+      fetchTab("complaints");
+    } catch { showToast("Hindi na-update. Subukan ulit."); }
+  }
+
+  // Respond to concern — backend uses /api/concerns/:id with { status, admin_response }
+  async function saveConcernResponse(id, status, admin_response) {
+    try {
+      const res = await fetch(`${API}/api/concerns/${id}`, {
+        method: "PATCH", headers: authHeaders,
+        body: JSON.stringify({ status, admin_response }),
+      });
+      if (!res.ok) throw new Error();
+      showToast("Concern na-update!");
+      setRespond(null);
+      fetchTab("concerns");
+    } catch { showToast("Hindi na-update. Subukan ulit."); }
+  }
+
+  function handleLogout() {
+    localStorage.removeItem("efas_user");
+    localStorage.removeItem("efas_token");
+    navigate("/login");
+  }
+
+  // ── Table configs (matching actual backend field names) ────────────────
+  const tableConfig = {
+    drivers: {
+      columns: [
+        { key: "id",            label: "ID" },
+        { key: "full_name",     label: "Pangalan",    render: r => r.full_name || r.name || "—" },
+        { key: "driver_code",   label: "Driver Code", render: r => r.driver_code || r.license_no || "—" },
+        { key: "plate_number",  label: "Plate No.",   render: r => r.plate_number || r.plate || "—" },
+        { key: "assigned_route",label: "Route",       render: r => r.assigned_route || r.route || "—" },
+        { key: "status",        label: "Status",      render: r => <Badge status={r.status} /> },
+        {
+          key: "actions", label: "Aksyon",
+          render: row => (
+            <div style={{ display: "flex", gap: 8 }}>
+              <button style={btn("#198754","#fff")}
+                onClick={() => askConfirm(`I-activate si ${row.full_name || row.name}?`, () => {
+                  setConfirm(null); updateDriverStatus(row.id, "active");
+                })}>
+                Activate
+              </button>
+              <button style={btn("#6c757d","#fff")}
+                onClick={() => askConfirm(`I-deactivate si ${row.full_name || row.name}?`, () => {
+                  setConfirm(null); updateDriverStatus(row.id, "inactive");
+                })}>
+                Deactivate
+              </button>
+            </div>
+          ),
+        },
+      ],
+    },
+    complaints: {
+      columns: [
+        { key: "id",          label: "ID" },
+        { key: "driver_code", label: "Driver Code", render: r => r.driver_code || "—" },
+        { key: "complaint",   label: "Reklamo",     render: r => r.complaint || r.description || r.message || "—" },
+        { key: "status",      label: "Status",      render: r => <Badge status={r.status} /> },
+        { key: "created_at",  label: "Petsa",       render: r => r.created_at?.slice(0,10) || "—" },
+        {
+          key: "actions", label: "Aksyon",
+          render: row => (
+            <div style={{ display: "flex", gap: 8 }}>
+              <button style={btn("#0d6efd","#fff")}
+                onClick={() => updateComplaintStatus(row.id, "resolved")}>
+                Resolve
+              </button>
+              <button style={btn("#dc3545","#fff")}
+                onClick={() => updateComplaintStatus(row.id, "rejected")}>
+                Reject
+              </button>
+            </div>
+          ),
+        },
+      ],
+    },
+    concerns: {
+      columns: [
+        { key: "id",           label: "ID" },
+        { key: "driver_name",  label: "Driver" },
+        { key: "concern_type", label: "Uri" },
+        { key: "description",  label: "Detalye", render: r => (
+          <span title={r.description} style={{ maxWidth: 220, display: "inline-block",
+            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {r.description}
+          </span>
+        )},
+        { key: "status",      label: "Status",  render: r => <Badge status={r.status} /> },
+        { key: "created_at",  label: "Petsa",   render: r => r.created_at?.slice(0,10) || "—" },
+        {
+          key: "actions", label: "Aksyon",
+          render: row => (
+            <button style={btn("#1a2a4a","#fff")} onClick={() => setRespond(row)}>
+              Sagutin
+            </button>
+          ),
+        },
+      ],
+    },
   };
 
-  const logout = () => {
-    localStorage.removeItem('efas_token');
-    localStorage.removeItem('efas_user');
-    navigate('/login');
-  };
-
-  const updateComplaint = async (id, status) => {
-    await axios.patch(`${API}/api/complaints/${id}`, { status }, { headers: { Authorization: `Bearer ${token}` } });
-    loadData();
-  };
-
-  const updateDriverStatus = async (id, status) => {
-    await axios.patch(`${API}/api/drivers/${id}/status`, { status }, { headers: { Authorization: `Bearer ${token}` } });
-    loadData();
-  };
-
-  const respondConcern = async (id, response) => {
-    await axios.patch(`${API}/api/concerns/${id}`, { status: 'resolved', admin_response: response }, { headers: { Authorization: `Bearer ${token}` } });
-    loadData();
-  };
-
-  if (loading) return (
-    <div style={{ minHeight:'100vh', background:'#1A4A8A', display:'flex', alignItems:'center', justifyContent:'center' }}>
-      <div style={{ color:'white', fontSize:'16px' }}>⏳ Naglo-load...</div>
-    </div>
-  );
-
-  const tabStyle = (t) => ({
-    padding:'12px 20px', cursor:'pointer', fontWeight:'600', fontSize:'13px',
-    borderBottom: tab === t ? '3px solid #F5C518' : '3px solid transparent',
-    color: tab === t ? '#1A4A8A' : '#6B7280', background:'none', border:'none',
-    borderBottom: tab === t ? '3px solid #F5C518' : '3px solid transparent',
-  });
-
-  const statusColor = (s) => {
-    if (s === 'new') return { bg:'#FEE2E2', color:'#DC2626' };
-    if (s === 'under_review') return { bg:'#FEF3C7', color:'#D97706' };
-    if (s === 'resolved') return { bg:'#D1FAE5', color:'#059669' };
-    return { bg:'#F3F4F6', color:'#6B7280' };
-  };
+  if (!user) return null;
 
   return (
-    <div style={{ minHeight:'100vh', background:'#F3F4F6', fontFamily:'system-ui, sans-serif' }}>
-      {/* Top Bar */}
-      <div style={{ background:'#1A4A8A', padding:'0 24px', height:'56px', display:'flex', alignItems:'center', justifyContent:'space-between', position:'sticky', top:0, zIndex:100 }}>
-        <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
-          <div style={{ width:'32px', height:'32px', background:'#F5C518', borderRadius:'8px', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:'900', fontSize:'13px', color:'#1A4A8A' }}>E</div>
-          <div>
-            <div style={{ color:'white', fontWeight:'700', fontSize:'14px' }}>E.F.A.S.</div>
-            <div style={{ color:'rgba(255,255,255,0.6)', fontSize:'10px' }}>Solano, Nueva Vizcaya</div>
+    <div style={{ display: "flex", minHeight: "100vh", fontFamily: "'Segoe UI', sans-serif", background: "#f5f7fb" }}>
+
+      {/* ── Sidebar ── */}
+      <aside style={{
+        width: 230, background: "#1a2a4a", color: "#fff",
+        display: "flex", flexDirection: "column", padding: "0 0 24px",
+        position: "fixed", top: 0, left: 0, bottom: 0, overflowY: "auto",
+      }}>
+        <div style={{ padding: "28px 24px 20px", borderBottom: "1px solid rgba(255,255,255,.1)" }}>
+          <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: 1 }}>⚖️ E.F.A.S.</div>
+          <div style={{ fontSize: 11, color: "#8fa3c7", marginTop: 4 }}>
+            {isSuperAdmin ? "Super Administrator" : "Administrator"}
           </div>
         </div>
-        <div style={{ display:'flex', alignItems:'center', gap:'12px' }}>
-          <div style={{ background:'#F5C518', color:'#1A4A8A', padding:'3px 10px', borderRadius:'20px', fontSize:'11px', fontWeight:'700' }}>
-            {user?.role?.toUpperCase()}
+
+        <nav style={{ flex: 1, padding: "16px 12px" }}>
+          {navItems.map(item => (
+            <button key={item.key} onClick={() => setActiveTab(item.key)} style={{
+              display: "flex", alignItems: "center", gap: 12,
+              width: "100%", padding: "11px 14px", borderRadius: 8,
+              border: "none", cursor: "pointer", fontSize: 14,
+              fontWeight: activeTab === item.key ? 700 : 400,
+              background: activeTab === item.key ? "rgba(255,255,255,.12)" : "transparent",
+              color: activeTab === item.key ? "#fff" : "#8fa3c7",
+              marginBottom: 4, textAlign: "left", transition: "all .15s",
+            }}>
+              <span style={{ fontSize: 18 }}>{item.icon}</span>
+              {item.label}
+            </button>
+          ))}
+        </nav>
+
+        <div style={{ padding: "0 12px" }}>
+          <div style={{ fontSize: 12, color: "#8fa3c7", padding: "0 14px 8px", wordBreak: "break-all" }}>
+            {user.email}
           </div>
-          <span style={{ color:'rgba(255,255,255,0.8)', fontSize:'13px' }}>{user?.full_name}</span>
-          <button onClick={logout} style={{ background:'rgba(255,255,255,0.15)', color:'white', border:'none', padding:'6px 14px', borderRadius:'8px', cursor:'pointer', fontSize:'12px', fontWeight:'600' }}>
-            Logout
+          <button onClick={handleLogout} style={{
+            ...btn("rgba(255,255,255,.08)","#f87171"),
+            width: "100%", textAlign: "left", padding: "11px 14px", borderRadius: 8,
+          }}>
+            🚪 Logout
           </button>
         </div>
-      </div>
+      </aside>
 
-      {/* Tab Bar */}
-      <div style={{ background:'white', borderBottom:'1px solid #E5E7EB', display:'flex', padding:'0 24px', overflowX:'auto' }}>
-        {[
-          { key:'overview', label:'📊 Overview' },
-          { key:'drivers', label:'🚖 Drivers' },
-          { key:'complaints', label:'📋 Complaints' },
-          { key:'concerns', label:'💬 Driver Concerns' },
-          ...(user?.role === 'superadmin' ? [{ key:'enroll', label:'➕ Enroll Driver' }] : [{ key:'enroll', label:'➕ Enroll Driver' }])
-        ].map(t => (
-          <button key={t.key} onClick={() => setTab(t.key)} style={tabStyle(t.key)}>{t.label}</button>
-        ))}
-      </div>
+      {/* ── Main ── */}
+      <main style={{ marginLeft: 230, flex: 1, padding: "32px 36px" }}>
 
-      <div style={{ padding:'20px 24px', maxWidth:'1200px', margin:'0 auto' }}>
+        <div style={{ marginBottom: 28 }}>
+          <h1 style={{ fontSize: 24, fontWeight: 700, color: "#1a2a4a", margin: 0 }}>
+            {navItems.find(n => n.key === activeTab)?.label || "Dashboard"}
+          </h1>
+          <p style={{ color: "#888", fontSize: 13, marginTop: 4 }}>
+            E.F.A.S. — Electronic Filing and Adjudication System · Solano, Nueva Vizcaya
+          </p>
+        </div>
 
-        {/* OVERVIEW */}
-        {tab === 'overview' && (
+        {/* Overview */}
+        {activeTab === "overview" && (
           <div>
-            <h2 style={{ color:'#1A4A8A', marginBottom:'16px', fontSize:'20px' }}>Dashboard Overview</h2>
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(160px, 1fr))', gap:'12px', marginBottom:'20px' }}>
-              {[
-                { label:'Total Drivers', value: stats.total_drivers, color:'#1A4A8A' },
-                { label:'Active Drivers', value: stats.active_drivers, color:'#059669' },
-                { label:'Total Complaints', value: stats.total_complaints, color:'#DC2626' },
-                { label:'New Complaints', value: stats.new_complaints, color:'#D97706' },
-                { label:'Driver Concerns', value: stats.new_concerns, color:'#7C3AED' },
-                { label:'QR Scans Today', value: stats.scans_today, color:'#2563EB' },
-              ].map((s, i) => (
-                <div key={i} style={{ background:'white', borderRadius:'12px', padding:'16px', boxShadow:'0 1px 4px rgba(0,0,0,0.06)', textAlign:'center' }}>
-                  <div style={{ fontSize:'28px', fontWeight:'800', color: s.color }}>{s.value ?? 0}</div>
-                  <div style={{ fontSize:'11px', color:'#9CA3AF', marginTop:'4px', textTransform:'uppercase', letterSpacing:'0.4px' }}>{s.label}</div>
-                </div>
-              ))}
+            <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 32 }}>
+              <StatCard label="Kabuuang Drivers"  value={stats.drivers}    color="#0ea5e9" />
+              <StatCard label="Mga Reklamo"        value={stats.complaints} color="#f59e0b" />
+              <StatCard label="Bagong Concerns"    value={stats.concerns}   color="#10b981" />
+              <StatCard label="Pending Complaints" value={stats.pending}    color="#ef4444" />
+              <StatCard label="QR Scans Ngayon"    value={stats.scans}      color="#6366f1" />
             </div>
-            <div style={{ background:'#EFF6FF', borderRadius:'12px', padding:'16px', fontSize:'13px', color:'#1A4A8A' }}>
-              🔒 <strong>Privacy Policy:</strong> Ang real-time na lokasyon ng driver ay hindi available para sa admin. Ang route map ay para lamang sa passenger habang aktibo ang trip.
-            </div>
-          </div>
-        )}
 
-        {/* DRIVERS */}
-        {tab === 'drivers' && (
-          <div>
-            <h2 style={{ color:'#1A4A8A', marginBottom:'16px', fontSize:'20px' }}>Mga Driver</h2>
-            <div style={{ display:'grid', gap:'10px' }}>
-              {drivers.map(d => (
-                <div key={d.driver_id} style={{ background:'white', borderRadius:'12px', padding:'16px', boxShadow:'0 1px 4px rgba(0,0,0,0.06)', display:'flex', alignItems:'center', gap:'14px' }}>
-                  <div style={{ width:'46px', height:'46px', background:'#1A4A8A', borderRadius:'12px', display:'flex', alignItems:'center', justifyContent:'center', color:'white', fontWeight:'700', fontSize:'14px', flexShrink:0 }}>
-                    {d.full_name.split(' ').map(n=>n[0]).join('').slice(0,2)}
-                  </div>
-                  <div style={{ flex:1 }}>
-                    <div style={{ fontWeight:'700', color:'#1F2937', fontSize:'14px' }}>{d.full_name}</div>
-                    <div style={{ fontSize:'12px', color:'#6B7280' }}>{d.plate_number} · {d.driver_code} · ⭐{d.avg_rating}</div>
-                  </div>
-                  <div style={{ display:'flex', gap:'6px', alignItems:'center' }}>
-                    <span style={{ background: d.status==='active' ? '#D1FAE5' : d.status==='suspended' ? '#FEE2E2' : '#F3F4F6', color: d.status==='active' ? '#059669' : d.status==='suspended' ? '#DC2626' : '#6B7280', padding:'3px 10px', borderRadius:'20px', fontSize:'11px', fontWeight:'700' }}>
-                      {d.status.toUpperCase()}
-                    </span>
-                    {d.status !== 'suspended' ? (
-                      <button onClick={() => updateDriverStatus(d.driver_id, 'suspended')}
-                        style={{ background:'#FEE2E2', color:'#DC2626', border:'none', padding:'5px 10px', borderRadius:'8px', cursor:'pointer', fontSize:'11px', fontWeight:'700' }}>
-                        Suspindihin
-                      </button>
-                    ) : (
-                      <button onClick={() => updateDriverStatus(d.driver_id, 'active')}
-                        style={{ background:'#D1FAE5', color:'#059669', border:'none', padding:'5px 10px', borderRadius:'8px', cursor:'pointer', fontSize:'11px', fontWeight:'700' }}>
-                        I-activate
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* COMPLAINTS */}
-        {tab === 'complaints' && (
-          <div>
-            <h2 style={{ color:'#1A4A8A', marginBottom:'16px', fontSize:'20px' }}>Mga Complaint</h2>
-            <div style={{ display:'grid', gap:'10px' }}>
-              {complaints.map(c => {
-                const sc = statusColor(c.status);
-                return (
-                  <div key={c.id} style={{ background:'white', borderRadius:'12px', padding:'16px', boxShadow:'0 1px 4px rgba(0,0,0,0.06)', borderLeft:`4px solid ${sc.color}` }}>
-                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'8px' }}>
-                      <div>
-                        <div style={{ fontWeight:'700', color:'#1F2937', fontSize:'14px' }}>{c.driver_name} ({c.plate_number})</div>
-                        <div style={{ fontSize:'11px', color:'#9CA3AF' }}>{c.incident_date} · {c.complaint_type.replace('_',' ').toUpperCase()}</div>
-                      </div>
-                      <span style={{ background: sc.bg, color: sc.color, padding:'3px 10px', borderRadius:'20px', fontSize:'11px', fontWeight:'700' }}>
-                        {c.status.replace('_',' ').toUpperCase()}
-                      </span>
-                    </div>
-                    <div style={{ fontSize:'13px', color:'#4B5563', marginBottom:'10px', lineHeight:'1.5' }}>{c.description}</div>
-                    {c.complaint_level === 'unverified' && (
-                      <div style={{ background:'#FEF3C7', padding:'6px 10px', borderRadius:'8px', fontSize:'11px', color:'#92400E', marginBottom:'8px' }}>
-                        ⚠️ Unverified — walang Trip ID
-                      </div>
-                    )}
-                    {c.status === 'new' && (
-                      <div style={{ display:'flex', gap:'6px' }}>
-                        <button onClick={() => updateComplaint(c.id, 'under_review')}
-                          style={{ background:'#FEF3C7', color:'#D97706', border:'none', padding:'6px 12px', borderRadius:'8px', cursor:'pointer', fontSize:'12px', fontWeight:'700' }}>
-                          Under Review
-                        </button>
-                        <button onClick={() => updateComplaint(c.id, 'resolved')}
-                          style={{ background:'#D1FAE5', color:'#059669', border:'none', padding:'6px 12px', borderRadius:'8px', cursor:'pointer', fontSize:'12px', fontWeight:'700' }}>
-                          Resolve
-                        </button>
-                        <button onClick={() => updateComplaint(c.id, 'dismissed')}
-                          style={{ background:'#F3F4F6', color:'#6B7280', border:'none', padding:'6px 12px', borderRadius:'8px', cursor:'pointer', fontSize:'12px', fontWeight:'700' }}>
-                          Dismiss
-                        </button>
-                      </div>
-                    )}
-                    {c.status === 'under_review' && (
-                      <div style={{ display:'flex', gap:'6px' }}>
-                        <button onClick={() => updateComplaint(c.id, 'resolved')}
-                          style={{ background:'#D1FAE5', color:'#059669', border:'none', padding:'6px 12px', borderRadius:'8px', cursor:'pointer', fontSize:'12px', fontWeight:'700' }}>
-                          ✓ Resolve
-                        </button>
-                        <button onClick={() => updateComplaint(c.id, 'dismissed')}
-                          style={{ background:'#F3F4F6', color:'#6B7280', border:'none', padding:'6px 12px', borderRadius:'8px', cursor:'pointer', fontSize:'12px', fontWeight:'700' }}>
-                          Dismiss
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-              {complaints.length === 0 && (
-                <div style={{ textAlign:'center', padding:'40px', color:'#9CA3AF' }}>
-                  <div style={{ fontSize:'40px' }}>📋</div>
-                  <div>Walang complaints pa</div>
-                </div>
+            <div style={{ background: "#fff", borderRadius: 12, padding: 24, boxShadow: "0 2px 8px rgba(0,0,0,.06)" }}>
+              {isSuperAdmin ? (
+                <>
+                  <h3 style={{ margin: "0 0 8px", color: "#1a2a4a" }}>🛡️ Super Admin</h3>
+                  <p style={{ color: "#555", fontSize: 14, margin: 0 }}>
+                    May buong access ka: drivers, complaints, at concerns.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <h3 style={{ margin: "0 0 8px", color: "#1a2a4a" }}>👤 Admin</h3>
+                  <p style={{ color: "#555", fontSize: 14, margin: 0 }}>
+                    Maaari kang mag-manage ng drivers, complaints, at concerns.
+                  </p>
+                </>
               )}
             </div>
           </div>
         )}
 
-        {/* DRIVER CONCERNS */}
-        {tab === 'concerns' && (
-          <div>
-            <h2 style={{ color:'#1A4A8A', marginBottom:'16px', fontSize:'20px' }}>Driver Concerns</h2>
-            <div style={{ display:'grid', gap:'10px' }}>
-              {concerns.map(c => (
-                <div key={c.id} style={{ background:'white', borderRadius:'12px', padding:'16px', boxShadow:'0 1px 4px rgba(0,0,0,0.06)', borderLeft:'4px solid #7C3AED' }}>
-                  <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'8px' }}>
-                    <div>
-                      <div style={{ fontWeight:'700', color:'#1F2937', fontSize:'14px' }}>{c.driver_name} ({c.plate_number})</div>
-                      <div style={{ fontSize:'11px', color:'#9CA3AF' }}>{c.concern_type.replace('_',' ').toUpperCase()}</div>
-                    </div>
-                    <span style={{ background: c.status==='new' ? '#FEE2E2' : c.status==='resolved' ? '#D1FAE5' : '#FEF3C7', color: c.status==='new' ? '#DC2626' : c.status==='resolved' ? '#059669' : '#D97706', padding:'3px 10px', borderRadius:'20px', fontSize:'11px', fontWeight:'700' }}>
-                      {c.status.toUpperCase()}
-                    </span>
-                  </div>
-                  <div style={{ fontSize:'13px', color:'#4B5563', marginBottom:'10px', lineHeight:'1.5' }}>{c.description}</div>
-                  {c.admin_response && (
-                    <div style={{ background:'#EFF6FF', padding:'10px', borderRadius:'8px', fontSize:'12px', color:'#1A4A8A', marginBottom:'8px' }}>
-                      <strong>Admin Response:</strong> {c.admin_response}
-                    </div>
-                  )}
-                  {c.status !== 'resolved' && (
-                    <div style={{ display:'flex', gap:'8px' }}>
-                      <input placeholder='I-type ang response...'
-                        id={`concern-${c.id}`}
-                        style={{ flex:1, padding:'8px 12px', borderRadius:'8px', border:'1.5px solid #E5E7EB', fontSize:'13px' }} />
-                      <button onClick={() => {
-                        const val = document.getElementById(`concern-${c.id}`).value;
-                        if (val) respondConcern(c.id, val);
-                      }} style={{ background:'#1A4A8A', color:'white', border:'none', padding:'8px 14px', borderRadius:'8px', cursor:'pointer', fontSize:'12px', fontWeight:'700' }}>
-                        Sagutin
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ))}
-              {concerns.length === 0 && (
-                <div style={{ textAlign:'center', padding:'40px', color:'#9CA3AF' }}>
-                  <div style={{ fontSize:'40px' }}>💬</div>
-                  <div>Walang concerns pa</div>
-                </div>
-              )}
-            </div>
+        {/* Data Tabs */}
+        {activeTab !== "overview" && (
+          <div style={{ background: "#fff", borderRadius: 12, padding: 28, boxShadow: "0 2px 8px rgba(0,0,0,.06)" }}>
+            {loading
+              ? <p style={{ color: "#888" }}>Naglo-load…</p>
+              : <DataTable columns={tableConfig[activeTab]?.columns ?? []} rows={data} />
+            }
           </div>
         )}
+      </main>
 
-        {/* ENROLL DRIVER */}
-        {tab === 'enroll' && <EnrollDriver token={token} onSuccess={loadData} />}
-      </div>
+      {/* Modals */}
+      {confirm && (
+        <ConfirmModal
+          message={confirm.message}
+          onConfirm={confirm.onConfirm}
+          onCancel={() => setConfirm(null)}
+        />
+      )}
+
+      {respond && (
+        <RespondModal
+          concern={respond}
+          onClose={() => setRespond(null)}
+          onSave={saveConcernResponse}
+        />
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <div style={{
+          position: "fixed", bottom: 28, right: 28,
+          background: "#1a2a4a", color: "#fff",
+          padding: "12px 24px", borderRadius: 8,
+          fontSize: 14, fontWeight: 500,
+          boxShadow: "0 4px 16px rgba(0,0,0,.2)", zIndex: 9999,
+        }}>
+          {toast}
+        </div>
+      )}
     </div>
   );
 }
-
-function EnrollDriver({ token, onSuccess }) {
-  const [form, setForm] = useState({
-    full_name:'', email:'', password:'',
-    plate_number:'', body_number:'', ltfrb_license:'',
-    contact_number:'', assigned_route:'', date_enrolled:''
-  });
-  const [loading, setLoading] = useState(false);
-  const [success, setSuccess] = useState('');
-  const [error, setError] = useState('');
-
-  const submit = async () => {
-    if (!form.full_name || !form.email || !form.password || !form.plate_number || !form.body_number || !form.ltfrb_license) {
-      setError('Kumpletuhin ang lahat ng required fields!');
-      return;
-    }
-    setLoading(true);
-    setError('');
-    try {
-      const res = await axios.post(`${API}/api/drivers`, form, { headers: { Authorization: `Bearer ${token}` } });
-      setSuccess(`✅ Driver na-enroll! QR Code: ${res.data.data.qrCode}`);
-      setForm({ full_name:'', email:'', password:'', plate_number:'', body_number:'', ltfrb_license:'', contact_number:'', assigned_route:'', date_enrolled:'' });
-      onSuccess();
-    } catch (err) {
-      setError(err.response?.data?.message || 'Error sa pag-enroll.');
-    }
-    setLoading(false);
-  };
-
-  const inp = (label, key, type='text', placeholder='') => (
-    <div style={{ marginBottom:'12px' }}>
-      <label style={{ fontSize:'11px', fontWeight:'600', color:'#4B5563', textTransform:'uppercase', letterSpacing:'0.4px', display:'block', marginBottom:'5px' }}>{label}</label>
-      <input type={type} value={form[key]} onChange={e => setForm({...form, [key]: e.target.value})} placeholder={placeholder}
-        style={{ width:'100%', padding:'10px 12px', borderRadius:'8px', border:'1.5px solid #E5E7EB', fontSize:'13px', background:'#F3F4F6', boxSizing:'border-box' }} />
-    </div>
-  );
-
-  return (
-    <div>
-      <h2 style={{ color:'#1A4A8A', marginBottom:'16px', fontSize:'20px' }}>Mag-enroll ng Bagong Driver</h2>
-      {error && <div style={{ background:'#FEE2E2', color:'#DC2626', padding:'12px', borderRadius:'8px', marginBottom:'14px', fontSize:'13px', fontWeight:'600' }}>❌ {error}</div>}
-      {success && <div style={{ background:'#D1FAE5', color:'#065F46', padding:'12px', borderRadius:'8px', marginBottom:'14px', fontSize:'13px', fontWeight:'600' }}>{success}</div>}
-      <div style={{ background:'white', borderRadius:'14px', padding:'20px', boxShadow:'0 1px 4px rgba(0,0,0,0.06)', maxWidth:'600px' }}>
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 16px' }}>
-          <div>{inp('Buong Pangalan *', 'full_name', 'text', 'Juan dela Cruz')}</div>
-          <div>{inp('Email *', 'email', 'email', 'driver@efas.gov.ph')}</div>
-          <div>{inp('Password *', 'password', 'password', '••••••••')}</div>
-          <div>{inp('Plate Number *', 'plate_number', 'text', 'TRK-XXX')}</div>
-          <div>{inp('Body Number *', 'body_number', 'text', 'BDY-XXX')}</div>
-          <div>{inp('LTFRB License *', 'ltfrb_license', 'text', 'LIC-2024-XXXXX')}</div>
-          <div>{inp('Contact Number', 'contact_number', 'tel', '09XX-XXX-XXXX')}</div>
-          <div>{inp('Date Enrolled', 'date_enrolled', 'date', '')}</div>
-        </div>
-        <div style={{ marginBottom:'16px' }}>
-          <label style={{ fontSize:'11px', fontWeight:'600', color:'#4B5563', textTransform:'uppercase', letterSpacing:'0.4px', display:'block', marginBottom:'5px' }}>Assigned Route</label>
-          <select value={form.assigned_route} onChange={e => setForm({...form, assigned_route: e.target.value})}
-            style={{ width:'100%', padding:'10px 12px', borderRadius:'8px', border:'1.5px solid #E5E7EB', fontSize:'13px', background:'#F3F4F6' }}>
-            <option value=''>-- Piliin ang ruta --</option>
-            <option>Solano Town Center – Maharlika Hwy</option>
-            <option>Solano – Bambang Junction</option>
-            <option>Solano Market – Solano Hospital</option>
-            <option>Barrio Loop – Solano Terminal</option>
-          </select>
-        </div>
-        <button onClick={submit} disabled={loading}
-          style={{ width:'100%', background: loading ? '#9CA3AF' : '#F5C518', color:'#1A4A8A', border:'none', padding:'13px', borderRadius:'10px', fontWeight:'800', fontSize:'15px', cursor: loading ? 'not-allowed' : 'pointer' }}>
-          {loading ? '⏳ Nagpo-proseso...' : '📲 I-enroll at Gumawa ng QR Code'}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-export default AdminDashboard;
